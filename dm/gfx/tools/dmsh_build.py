@@ -616,7 +616,10 @@ def job_for(key, name, rec, w):
             code = code[0x100:]
         tf = tf_layout(key, rec[ci:]) if stage in ('vs', 'gs') else None
         if tf: extra['tf'] = tf
-        if stage == 'ps' and early_fragment_tests(rec[ci:], code): extra['early_fragment_tests'] = True
+        # No early_fragment_tests in the job (the function and the translator's job key stay): every shader the flag marks stores to memory, and with the attribute Apple GPUs
+        # remove hidden fragments of such a shader before it runs, with their stores. Tears of the Kingdom's material shaders (8f470f5ce5864df7) store per-tile flags that way;
+        # the tiles whose surfaces a later draw covered lost them, and its tile lighting left the opening cave black except for rectangles around Link and Zelda (Mac and iPad,
+        # 2026-11-06). Maxwell runs every fragment that passes the test when it is drawn; without the attribute Metal runs every fragment of a shader that stores to memory
     cp = os.path.join(w, key + '.bin'); open(cp, 'wb').write(code)
     j = {'key': key, 'stage': stage, 'code': cp, 'tex': {}, 'img': {}, 'attr': {}, 'fout': {}, 'c1': c1.hex(), **extra,
          'debug': os.environ.get('XLATE_DEBUG', '1') != '0', 'reduced': os.environ.get('XLATE_REDUCED', '1') == '1'}   # translation options (see dmsh_xlate/Program.cs); relaxed precision is on by default (GPU float last-bit error does not enter game state, whole frame −26% on the second Mac)   # c1: used by the translator to read indirect jump tables
