@@ -185,7 +185,13 @@ def header_one(g):
     sf = g.get('shared_font', 'bfttf')   # what the shared-font address points at (hle_sdk16.c): bfttf = 8-byte header + TTF, ttf = the TTF alone
     if sf not in ('bfttf', 'ttf'): sys.exit(f'{g.id}: shared_font must be bfttf or ttf: {sf}')
     pl = g.get('pad_layout', 'simple')   # the virtual gamepad's first layout (DmGamepad.m; afterwards whatever the player switched to in game is kept): simple = 2D, full = 3D (D-pad, right stick, L3 / R3),
-    if pl not in ('simple', 'full', 'touch'): sys.exit(f'{g.id}: pad_layout must be simple, full or touch: {pl}')   # touch = Tap (no control: every touch goes to the game's touch screen)
+    if pl not in ('simple', 'full', 'touch', 'native'): sys.exit(f'{g.id}: pad_layout must be simple, full, touch or native: {pl}')   # touch = Tap (no control: every touch goes to the game's touch screen); native = a mobile-game layout in glass (a floating left stick, the camera on the right half, icon keys with the button's letter)
+    fwg = g.get('frame_wg', 'off')   # Deadline boost's default (hle_nvn.c fwg_get, the frame workgroup; DM_FRAME_WG and the launcher override): on keeps the frame's threads on the performance cores
+    if fwg not in ('off', 'on'): sys.exit(f'{g.id}: frame_wg must be off or on: {fwg}')
+    rsp = g.get('res_presets', 'off')   # the launcher's Resolution row (DM_RES_PRESET, hle_fs.c rom_overlay_set): on when the app's romfs_overlay has potato-<mode>/ folders beside <mode>/ (Ocarina of Time: 0.6 of the base)
+    if rsp not in ('off', 'on'): sys.exit(f'{g.id}: res_presets must be off or on: {rsp}')
+    pth = g.get('pad_theme', 'classic')   # the virtual gamepad's colours (DmGamepad.m theme_init; the launcher's Touch controls style, DM_PAD_THEME, overrides): classic = translucent white, forest = the N64-and-woods palette
+    if pth not in ('classic', 'forest'): sys.exit(f'{g.id}: pad_theme must be classic or forest: {pth}')
     sks = g.get('shader_key_skip', '')   # control-section bytes the shader keys hash as zeros, <offset>+<length> (hle_nvn.c keys_hash, shader_split.py key_ctl; Batman: Arkham Knight: GLSLC's compile information, 0x770+0x78)
     m = re.fullmatch(r'(0x[0-9a-fA-F]+|\d+)\+(0x[0-9a-fA-F]+|\d+)', sks) if sks else None
     if sks and (not m or not 0x30 <= int(m[1], 0) or not 0 < int(m[2], 0) or int(m[1], 0) + int(m[2], 0) > 0x880 or (int(m[1], 0) < 0x760 and int(m[1], 0) + int(m[2], 0) > 0x700)):   # not over +0x700..+0x75f, the code area and compute fields the tools read
@@ -202,7 +208,7 @@ def header_one(g):
     rtl = g.get('rt_lossy', 'off')   # colour render targets the GPU writes only as attachments made with Metal's lossy compression (about half the memory and bandwidth; nvn_mtl.m rt_lossy): on / off
     if rtl not in ('on', 'off'): sys.exit(f'{g.id}: rt_lossy must be on or off: {rtl}')
     upc = g.get('upscaler_chain', '')   # <stage>,<stage>...><last>: an upscaler that is a chain of shaders (16-digit keys); with DM_UPSCALER=metalfx the stages before the last are skipped and MetalFX scales the first stage's input into the last's image (nvn_mtl.m up_chain)
-    if upc and not re.fullmatch(r'[0-9a-f]{16}(,[0-9a-f]{16})*>[0-9a-f]{16}', upc): sys.exit(f'{g.id}: upscaler_chain takes <key>,<key>...><key>: {upc}')
+    if upc and not re.fullmatch(r'[0-9a-f]{16}(,[0-9a-f]{16})*>[0-9a-f]{16}(\|[0-9a-f]{16})*', upc): sys.exit(f'{g.id}: upscaler_chain takes <key>,<key>...><key>[|<key>...] (the last stage, or any of several): {upc}')
     fcp = g.get('fps_cap_present', 'off')   # fps_target / the player's frame rate held by presentation alone (hle_nvn.c fps_present_cap), for a game whose logic follows real time: on / off
     if fcp not in ('on', 'off'): sys.exit(f'{g.id}: fps_cap_present must be on or off: {fcp}')
     rtd = g.get('rt_drop', 'off')   # render targets whose storage a later-drawn render target took over, and idle since, kept as 1x1 stand-ins until drawn again (nvn_mtl.m rtd_sweep): on / off
@@ -281,7 +287,10 @@ def header_one(g):
          f'#define DM_GAME_PSO_MTL4 {int(p4 == "on")}',
          f'#define DM_GAME_ENC_THREAD {int(et == "on")}',
          *([f'#define DM_GAME_SHARED_FONT_TTF {int(sf == "ttf")}'] if g.get('shared_font', '') else []),   # without the key the host decides by the SDK version (hle_sdk16.c)
-         f'#define DM_GAME_PAD_LAYOUT {("simple", "full", "touch").index(pl)}',
+         f'#define DM_GAME_PAD_LAYOUT {("simple", "full", "touch", "native").index(pl)}',
+         f'#define DM_GAME_PAD_THEME {("classic", "forest").index(pth)}',
+         f'#define DM_GAME_RES_PRESETS {int(rsp == "on")}',
+         f'#define DM_GAME_FRAME_WG {int(fwg == "on")}',
          f'#define DM_GAME_OPMODE {int(om == "console")}',
          f'#define DM_GAME_PERF_BOOST {int(pm == "boost")}',
          f'#define DM_GAME_TEX_FLUSH_UPLOAD {int(tfu == "on")}',

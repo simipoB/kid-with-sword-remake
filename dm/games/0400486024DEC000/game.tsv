@@ -28,11 +28,13 @@ romfs_substitute	Tex/CmnTex_Map_Soil_FairyFountain_Floor_D_Nrm.bntx.zs=Tex/Dummy
 
 # ---- Memory ----
 # The NPDM declares 48 MiB of system resources. Startup requests a 6.20 GiB heap.
-mem_reserve	0x300000000
-mem_alias	0x98000000
-# The alias region holds the game's streaming allocator (main+0x7ed630). The Mighty Green Kokiri Kid fork measured up to +4.95 GB of address regions in Kokiri Forest, and with this
-# 2.38 GB region VammManager::AllocateAddressRegion failed after 5-15 minutes outdoors (nn::diag abort). The Mac runs take an 8 GB region (DM_ALIAS_SIZE=0x200000000 in the run
-# command and the Mac app's env.txt); the iPhone keeps 2.38 GB until a larger reservation is checked on a phone (DM_ALIAS_SIZE in Documents/env.txt)
+# The alias region holds the game's streaming allocator (main+0x7ed630): in Kokiri Forest it maps up to +4.5-4.75 GB of address regions (an 8 GB region, Mac runs v6c, spin1).
+# With 2.38 GB (0x98000000) the allocator stops at +2.26 GB: the loader retries what does not fit, so the OptimizeChangeBanc thread (main+0xf7a0, a sead::Thread whose pass sleeps 16 ms
+# only when all is loaded) spins a whole core (997 ms/s, process CPU 308% against 168%, same host, Mac run alias238; every iPhone run), and after 5-15 minutes outdoors
+# VammManager::AllocateAddressRegion fails and the game aborts (the Mighty Green Kokiri Kid fork). 8 GB as in that fork; the reserve grows by the same 5.6 GB so the heap keeps its size.
+# The iPhone 18 Pro already reserved 12 GB plus 12 GB of guest files; DM_ALIAS_SIZE=0x98000000 in Documents/env.txt goes back to the small region
+mem_reserve	0x468000000
+mem_alias	0x200000000
 # A map that would take the process past the application pool fails with ResultLimitReached, as on Horizon: the SDK's allocator keeps freed pages mapped until a map fails,
 # then gives them back. Without it PR #1444 reports crashes entering Hyrule Castle, Kakariko Village and Death Mountain and a black screen leaving the Deku Tree
 mem_map_limit	on
@@ -73,15 +75,20 @@ pso_mtl4	on
 fps_target	60
 # The iPhone's touch gamepad starts in the full (3D) layout: the D-pad, L3 / R3 and the right stick, which turns the camera (a drag in the right third of the screen); the simple
 # layout has no right stick. A layout the player switches to in the game menu is kept
-pad_layout	full
+pad_layout	native
+# The touch controls' Forest colours: blue A, green B, yellow X / Y, red +, deep green shoulders, bronze D-pad, gold rims, all translucent (DmGamepad.m theme_init)
+pad_theme	forest
 # Dynamic resolution reads the GPU time between the frame's timestamp reports, as on Donkey Kong Bananza and Breath of the Wild (the same EPD engine family): with one time a submission it
 # read about 0 and kept the full 1440x810 at 20-24 ms of GPU a frame on a MacBook Air M5. Each report takes its segment's GPU start / end (nvn_mtl.m rep_ticks)
 gpu_timestamps	segment
 # The game upscales through a chain: agl_ndsr_vr feature pass, network and blend at the render size, agl_ndsr_vr_light scale to 1920x1080. DM_UPSCALER=metalfx skips the chain for MetalFX (nvn_mtl.m up_chain)
-upscaler_chain	f8965bffbdf51d78,d17eefaff4f0bc23,a335c1db6270c355>aad7ea7e5c02f41d
+upscaler_chain	f8965bffbdf51d78,d17eefaff4f0bc23,a335c1db6270c355>aad7ea7e5c02f41d|b106afba1a18faa9|fa3033d05c0a41d6|04135bb812a0d66e|8df148d58b7cbe8e
 # Colour render targets drawn only as attachments (RGBA8 / BGRA8 / RGBA16F) kept with Metal lossy compression (rt_lossy, nvn_mtl.m rt_lossy): about 100 MB less in Link's house at 720p;
 # the scene colour (RG11B10F) and depth have no lossy form
 rt_lossy	on
 # The game's compute dispatches with no barrier of its between them run side by side (nvn_mtl.m dispatch_enc): 117 at the start of a frame in Kokiri Forest waited each for the one
 # before, 5.7 ms; side by side 3.7 ms, the frame 27.1 -> 24.9 ms (docked, Apple M4 Pro), the picture within run-to-run noise (from the Mighty Green Kokiri Kid fork, 5208584a)
-dispatch_overlap	on
+dispatch_overlap	off
+res_presets	on
+frame_wg	off
+present_snap	on
