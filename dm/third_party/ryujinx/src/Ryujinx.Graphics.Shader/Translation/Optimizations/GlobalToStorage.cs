@@ -82,6 +82,18 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
                 _hfm = hfm;
             }
 
+            // nxnative: the raw vector load helpers by word count (TryGenerateRawStorageOp), kept apart from _entries, where a scalar load would find them
+            public readonly Dictionary<int, int> RawVectorFunctions = [];
+
+            public int AddRawVectorFunction(int count, Function function)
+            {
+                int functionId = _hfm.AddFunction(function);
+
+                RawVectorFunctions[count] = functionId;
+
+                return functionId;
+            }
+
             public int AddFunction(Operation baseOp, bool isMultiTarget, IReadOnlyList<uint> targetCbs, Function function)
             {
                 int functionId = _hfm.AddFunction(function);
@@ -381,13 +393,99 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
                     targetLanguage,
                     block,
                     operation,
-                    out int functionId))
+                    out int functionId,
+                    out bool raw))
                 {
                     return null;
                 }
 
+                if (raw &&
+                    operation.Inst == Instruction.Load &&
+                    operation.StorageKind == StorageKind.GlobalMemory &&
+                    operation.GlobalVectorCount > 1 &&
+                    operation.GlobalVectorWord == 0 &&
+                    TryGetRawVectorFunction(gtsContext, resourceManager, gpuAccessor, operation, out int vectorFunctionId))
+                {
+                    return GenerateRawVectorLoad(resourceManager, node, operation, vectorFunctionId);
+                }
+
                 return GenerateCallStorageOp(node, operation, null, functionId);
             }
+        }
+
+        // nxnative: the first word of a 64- or 128-bit global load whose address goes through the pool table (Operation.GlobalVectorCount) calls the vector helper, which leaves
+        // the other words in the shader's gmem_vec local memory; the loads of those words, which follow in the block, read them from there right after the call. A word whose
+        // load is gone (unused) is not read. The scan stops at any other memory access or call, so nothing writes gmem_vec in between
+        private static LinkedListNode<INode> GenerateRawVectorLoad(ResourceManager resourceManager, LinkedListNode<INode> node, Operation operation, int functionId)
+        {
+            int count = operation.GlobalVectorCount;
+            int vectorMemoryId = resourceManager.GetRawVectorMemory();
+
+            node = GenerateCallStorageOp(node, operation, null, functionId);   // the first word's load, now a copy of the call's result
+
+            LinkedListNode<INode> insertAfter = node;
+
+            for (LinkedListNode<INode> next = node.Next; next != null; next = next.Next)
+            {
+                if (next.Value is not Operation follower)
+                {
+                    continue;
+                }
+
+                if (follower.Inst == Instruction.Load &&
+                    follower.StorageKind == StorageKind.GlobalMemory &&
+                    follower.GlobalVectorCount == count &&
+                    follower.GlobalVectorWord > 0)
+                {
+                    Operand word = Local();
+                    Operation load = new(Instruction.Load, StorageKind.LocalMemory, word, Const(vectorMemoryId), Const(follower.GlobalVectorWord - 1));
+
+                    insertAfter = insertAfter.List.AddAfter(insertAfter, load);
+
+                    // A plain copy in its place: TurnIntoCopy keeps the storage kind, and this pass, which reaches the node later, would take it for a global access again
+                    Operand dest = follower.Dest;
+                    follower.TurnIntoCopy(word);
+                    word.UseOps.Remove(follower);
+                    follower.Dest = null;
+                    next.Value = new Operation(Instruction.Copy, dest, word);
+
+                    if (follower.GlobalVectorWord == count - 1)
+                    {
+                        break;
+                    }
+
+                    continue;
+                }
+
+                if (follower.GlobalVectorCount != 0 ||
+                    follower.StorageKind != StorageKind.None ||
+                    follower.Inst == Instruction.Call ||
+                    follower.Inst == Instruction.Barrier ||
+                    follower.Inst == Instruction.MemoryBarrier ||
+                    follower.Inst.IsAtomic())
+                {
+                    break;
+                }
+            }
+
+            return node;
+        }
+
+        private static bool TryGetRawVectorFunction(
+            GtsContext gtsContext,
+            ResourceManager resourceManager,
+            IGpuAccessor gpuAccessor,
+            Operation operation,
+            out int functionId)
+        {
+            int count = operation.GlobalVectorCount;
+
+            if (gtsContext.RawVectorFunctions.TryGetValue(count, out functionId))
+            {
+                return true;
+            }
+
+            return TryGenerateRawStorageOp(gtsContext, resourceManager, gpuAccessor, operation, out functionId, count);
         }
 
         private static bool CanUseInlineStorageOp(Operation operation, TargetLanguage targetLanguage)
@@ -589,11 +687,13 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
             TargetLanguage targetLanguage,
             BasicBlock block,
             Operation operation,
-            out int functionId)
+            out int functionId,
+            out bool raw)
         {
             Queue<PhiNode> phis = new();
             HashSet<PhiNode> visited = [];
             List<uint> targetCbs = [];
+            raw = false;
 
             Operand globalAddress = operation.GetSource(0);
 
@@ -657,6 +757,8 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
             {
                 gpuAccessor.Log($"Global memory operation \"{operation.Inst}\" traced to no storage buffer: it goes through the memory pool table.");
             }
+
+            raw = targetCbs.Count == 0;
 
             if (gtsContext.TryGetFunctionId(operation, isMultiTarget: true, targetCbs, out functionId))
             {
@@ -801,7 +903,8 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
             ResourceManager resourceManager,
             IGpuAccessor gpuAccessor,
             Operation operation,
-            out int functionId)
+            out int functionId,
+            int vectorCount = 1)
         {
             functionId = 0;
 
@@ -864,17 +967,27 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
             }
 
             Operand selected = Local();
+            Operand deltaLow = Local();
+            Operand deltaHigh = Local();
             Operand lblFound = Label();
             Operand lblChosen = Label();
 
-            // The entry this helper chose last in this invocation, if it holds the address: a shader reads a structure word after word from one pool, so all but the first access of a run
-            // choose the entry the first one chose (upstream PR #1464: Ocarina of Time's foliage mesh shader 73dc0b90c4082e43, 135 reads). The table's ranges are disjoint (nvn_mtl.m gmem_map),
-            // so the hint and the search below would choose the same entry, and the host binds one table for a whole draw or dispatch. The word starts at 0, the empty entry (its range ends at 0)
-            int lastBinding = resourceManager.AddRawLastEntryMemory();
-            Operand last = context.Load(StorageKind.LocalMemory, lastBinding);
-            Operand lastEntry = context.IMultiply(last, Const(GmemMapEntryWords));
-            Operand lastHolds = context.BitwiseAnd(AtOrBelow(MapWord(lastEntry, 1), MapWord(lastEntry, 0)), Below(MapWord(lastEntry, 3), MapWord(lastEntry, 2)));
-            context.Copy(selected, last);
+            // The entry this helper chose last in this invocation first (from seedds' 0f510fd5, PR #1464), its range and delta kept in private words, as PR #1464 kept them in
+            // registers: a shader reads a structure word after word from one pool, so all but the first access of a run take the entry the first one chose, here with two compares and
+            // no read of the table (Ocarina of Time's skinned vertex shaders read 759 words a vertex from one pointer, about 7 ms of a frame in Hyrule Castle Town). The table's
+            // ranges are disjoint (nvn_mtl.m gmem_map) and the host binds one table for a whole draw or dispatch, so the hint and the search would choose the same entry. The words
+            // start at 0: an empty range [0, 0), which holds no address. [0] the entry, [1..2] its start, [3..4] its end, [5..6] its delta
+            int[] cache = new int[7];
+            for (int k = 0; k < cache.Length; k++)
+            {
+                cache[k] = resourceManager.AddRawLastEntryMemory();
+            }
+
+            Operand CacheWord(int k) => context.Load(StorageKind.LocalMemory, cache[k]);
+            Operand lastHolds = context.BitwiseAnd(AtOrBelow(CacheWord(2), CacheWord(1)), Below(CacheWord(4), CacheWord(3)));
+            context.Copy(selected, CacheWord(0));
+            context.Copy(deltaLow, CacheWord(5));
+            context.Copy(deltaHigh, CacheWord(6));
             context.BranchIfTrue(lblChosen, lastHolds);
 
             // The host's tagged hint covers a whole chunk inside one entry. NDVE repeatedly accesses the same large pools from adjacent lanes. The chunk (address >> GmemHintShift)
@@ -912,14 +1025,25 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
 
             context.Copy(selected, index);
             context.MarkLabel(lblFound);
-            context.Store(StorageKind.LocalMemory, lastBinding, selected);
             Operand found = context.IMultiply(selected, Const(GmemMapEntryWords));
+            Operand endLow = MapWord(found, 2);
+            Operand endHigh = MapWord(found, 3);
             Operand lblSkip = Label();
-            context.BranchIfFalse(lblSkip, Below(MapWord(found, 3), MapWord(found, 2)));   // an address in no pool: the entry below it ends below it
+            context.BranchIfFalse(lblSkip, Below(endHigh, endLow));   // an address in no pool: the entry below it ends below it
 
-            // The last entry's range held it, or the hint's or the search's entry does
+            // The hint's or the search's entry holds it: it becomes the one kept
+            context.Copy(deltaLow, MapWord(found, 4));
+            context.Copy(deltaHigh, MapWord(found, 5));
+            context.Store(StorageKind.LocalMemory, cache[0], selected);
+            context.Store(StorageKind.LocalMemory, cache[1], MapWord(found, 0));
+            context.Store(StorageKind.LocalMemory, cache[2], MapWord(found, 1));
+            context.Store(StorageKind.LocalMemory, cache[3], endLow);
+            context.Store(StorageKind.LocalMemory, cache[4], endHigh);
+            context.Store(StorageKind.LocalMemory, cache[5], deltaLow);
+            context.Store(StorageKind.LocalMemory, cache[6], deltaHigh);
+
+            // The kept entry's range held it, or the hint's or the search's entry does
             context.MarkLabel(lblChosen);
-            found = context.IMultiply(selected, Const(GmemMapEntryWords));
 
             if (writes)
             {
@@ -930,13 +1054,22 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
 
             // A small integer is read or written in its 32-bit word
             Operand wordLow = isSmall ? context.BitwiseAnd(addrLow, Const(~3)) : addrLow;
-            Operand hostLow = context.IAdd(wordLow, MapWord(found, 4));
+            Operand hostLow = context.IAdd(wordLow, deltaLow);
             Operand carry = context.ConditionalSelect(context.ICompareLessUnsigned(hostLow, wordLow), Const(1), Const(0));
-            Operand hostHigh = context.IAdd(context.IAdd(addrHigh, MapWord(found, 5)), carry);
+            Operand hostHigh = context.IAdd(context.IAdd(addrHigh, deltaHigh), carry);
 
             Operand resultValue = null;
 
-            if (operation.Inst == Instruction.Load)
+            if (operation.Inst == Instruction.Load && vectorCount > 1)
+            {
+                // All the words of a 64- or 128-bit load in one vector load (ReplaceGlobalMemoryWithStorage, GenerateRawVectorLoad): word 0 returned, the others left in gmem_vec.
+                // The first word's entry holds them all: such a load is aligned to its size on the GPU, and every entry starts and ends on a pool's 4 KiB boundary
+                // (nvn_mtl.m gmem_map). Ocarina of Time's foliage mesh shaders read 464 of their 506 raw words as 116 such loads, which Metal's compiler kept as four word
+                // loads each, every one through a pointer of its own: one vector load each (first as an overlay of those shaders) took the frame's GPU time from 17.0 to
+                // 13.9 ms on an M4 Pro (docs/reference/shaders.md, 128-bit raw global loads read one word at a time)
+                resultValue = context.Add(Instruction.Load, StorageKind.GlobalMemoryVector, Local(), hostLow, hostHigh, Const(vectorCount), Const(resourceManager.GetRawVectorMemory()));
+            }
+            else if (operation.Inst == Instruction.Load)
             {
                 resultValue = context.Load(StorageKind.GlobalMemory, hostLow, hostHigh);
 
@@ -1009,12 +1142,14 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
 
             Function function = new(
                 ControlFlowGraph.Create(context.GetOperations()).Blocks,
-                GetFunctionName(operation, isMultiTarget: true, []) + "Raw",
+                GetFunctionName(operation, isMultiTarget: true, []) + (vectorCount > 1 ? $"RawV{vectorCount}" : "Raw"),
                 returnsValue,
                 inArgumentsCount,
                 0);
 
-            functionId = gtsContext.AddFunction(operation, isMultiTarget: true, [], function);
+            functionId = vectorCount > 1
+                ? gtsContext.AddRawVectorFunction(vectorCount, function)
+                : gtsContext.AddFunction(operation, isMultiTarget: true, [], function);
 
             return true;
         }

@@ -1,3 +1,4 @@
+DM_NVN_RC_LANDED	switch	`0` keeps drawing every draw under a render condition on a samples-passed report, as before; by default the condition is evaluated from the report's result once it has landed ([Occlusion conditions read once landed](reference/rendering.md#occlusion-conditions-read-once-landed))
 name	class	meaning
 DM_AB	diagnostic	`=<frames>` splits the run into phases of that many frames and alternates every switch set to `ab` (on in the odd phases); logs an `[ab]` line per phase with GPU and frame time and attachment traffic
 DM_ALIAS_SIZE	diagnostic	`=<bytes>` gives the guest an alias region of that size instead of the profile's (at least 256 MB, whole host pages; the heap and stacks stay as they are): `0x1000000000`, the Switch's 64 GB, holds what a game reserves unchanged; the NSP script's address region check sets it (Mac only: an iPhone has no room)
@@ -42,8 +43,11 @@ DM_FORCE_STRICT	diagnostic	`=1` makes the loader fail on forced-hook entries no 
 DM_FPS	switch	`30` or `60` pins the frame rate the display link and frame pacing aim for; otherwise it follows the game's present interval (60, or 30 when the game asks for 30)
 DM_FPS_CAP_FORCE	diagnostic	
 DM_FPS_HOLD	player	`on` / `off` overrides the profile's `fps_hold`: whether late frames may raise the hold above the frame cap's vsyncs (on by default)
-DM_FPS_TARGET	player	Frame-rate cap: `30` or `60`, `120` for a game whose profile has `fps_max 120` (60 otherwise), or `0` for the game's own limit; overrides the profile's `fps_target`
+DM_FPS_PAYBACK	player	`on` / `off` overrides the profile's `fps_payback`: whether real time a late frame lost is paid back with a step one vsync longer than the hold (on by default; off lets it go and the game slows by it)
 DM_FPS_TARGET	player	Frame-rate cap: `30` or `60`, or `0` for the game's own limit; overrides the profile's `fps_target`
+DM_FRAMEGEN	player	`1` (launcher: Frame generation, offered with the 30 fps frame rate): MetalFX's frame interpolator makes a frame between each two presents and the display link shows it between them, so a game held at 30 fps is shown at 60; turns present snapshots on with a ring of at least 3. Display link only, for presents held 1.5 ticks or more; `0` off (default) ([Frame generation between held presents](reference/frame-rate.md#frame-generation-between-held-presents))
+DM_FRAMEGEN_MV	switch	`0` gives frame generation's interpolator no motion, as X6-X9 did (its own flow finds motion up to about 64 px a frame); by default (`1`) the motion is found from the two presented pictures (`dm/gfx/msl/fgmv.metal`: 64 px tiles searched within 192 px at 1/8 size) and still HUD pixels are taken from the present after the interpolation ([Frame generation](reference/frame-rate.md))
+DM_FRAMEGEN_SCALE	player	`=<0.5-1>` (launcher: Frame generation size, Full = 1 or Lighter = 0.75): with frame generation, the snapshots and the generated frames at that fraction of the size shown, brought back by the present's MetalFX spatial scaler (turned on for it); default 1 ([Frame generation between held presents](reference/frame-rate.md#frame-generation-between-held-presents))
 DM_FRAME_WG	player	`1` (launcher: Deadline boost): the threads that make a frame join an os_workgroup interval whose deadline is the present period, so the performance controller keeps them fast; off by default
 DM_FS	diagnostic	When set, logs file opens, paths not found or not mounted, and a read summary every 64 MiB or 1000 reads
 DM_FSLOG	diagnostic	`=<file>` writes one TSV line per ReadFile: seconds since boot, guest path, offset, length and guest buffer address
@@ -55,7 +59,6 @@ DM_GAMES_DIR	path	Profile folders outside the repository, separated by `:`, sear
 DM_GAMES_FIRST	switch	`=1` searches `DM_GAMES_DIR` before `dm/games`, so a provisional or derived profile wins over the game's own (the NSP script's `--provisional`)
 DM_GAME_ENV	switch	`KEY=VALUE` pairs, separated by spaces, that the game's own `getenv` returns, in place of the profile's `game_env` (`hle_os.c`); any other name goes to the SDK's empty environment
 DM_GFX_FIXTURE_OUT	test	`=<dir>`: graphics tests write their raw result textures and buffers there
-DM_GFX_SCALE	diagnostic	The graphics scale tier `oe::GetCurrentGraphicsScale` answers: `0` the whole GPU (default), `1` or `2` the smaller shares the system leaves a game while it uses the GPU itself (GameChat video)
 DM_GLSLC_CAPTURE	path	`=<dir>` saves every GLSLC output the game compiles at run time; `shader_split.py` reads it (default `<version dir>/glslc_capture`)
 DM_GL_CAPTURE	path	`=<dir>`: the GL layer writes every shader source the game compiles (`<key>.vert` / `<key>.frag`) for `gl_shaders.py`; the NSP script uses it to capture run-time shaders
 DM_GL_DRAWLOG	diagnostic	`=<n>[:<seconds>]` logs the first `<n>` GL draws after `<seconds>`, each with its framebuffer, viewport, scissor box, program, uniforms, samplers and its vertex attributes' first vertices; `=1` or more also names samplers that have no texture
@@ -114,7 +117,9 @@ DM_NRO	switch	`0` turns off loading of the NRO modules the game's NRR files regi
 DM_NRO_CAPTURE	diagnostic	folder: a `nn::ro::LoadModule` with no rewritten copy writes the image to `<folder>/<SHA-256>.nro` and ends the run (the NSP script's capture of an NRO the game decodes at run time)
 DM_NRO_DIR	path	folder of NROs the shader split reads like `main`, and in which it finds a CRA archive's file table (the NSP script sets it for a captured NRO)
 DM_NVN_ALIAS_RETIRE	switch	`0` keeps shared textures until their storage is taken over or their pool goes, as before; by default, while the residency set holds more than 85 % of the working set, shared textures no live texture object has resolved to in 64 submissions are retired, the longest idle first, down to 75 % (`alias_retire_idle`)
+DM_NVN_ALIAS_SWEEP	switch	`=<fences>` (off by default; the Potato mode sets 600): at the memory readout, shared textures no texture object holds and nothing has looked up for that many fences are let go
 DM_NVN_ALLOCPROF	diagnostic	`=1` charges Metal allocation growth to each replayed op type and function, and logs command allocator sizes and each new texture (serial, size, format, storage)
+DM_NVN_ALLOC_CAP	switch	command allocators and visibility buffers the main submission may have in flight, 3-32 (default 16; 8 was the fixed cap before X1): at 8, Ocarina of Time's Hyrule Field blocked the submit thread
 DM_NVN_API	switch	`=<major>.<minor>` overrides the NVN API version `nvnDeviceGetInteger` reports (by default decided by the SDK version or the profile's `device_api`: 55.15 for SDK 11 and later, 53.313 before)
 DM_NVN_BARRIER	switch	How draw passes are ordered: `full` (default) waits for all earlier GPU work, `game` only for the previous pass's fragment stage unless the game set a barrier, `ab` alternates with the `DM_AB` phases
 DM_NVN_BF_WANT	path	`=<file>`: appends the key of each fragment shader whose passes could not be merged for lack of a readable-tile version to that file, once per key
@@ -142,6 +147,7 @@ DM_NVN_DISPATCH_OWN	switch	`=1` gives every compute dispatch a compute encoder o
 DM_NVN_DUAL_WANT	path	`=<file>`: appends the key of each pixel shader a pipeline blends with its output 1 as the second source, while it has no dual-source entry point, to that file, once per key (the profile's `dual_want.tsv`)
 DM_NVN_ENC_LABEL	diagnostic	`=1` labels every render encoder `p<pass in frame> <width>x<height> <first 8 digits of the first draw's fragment key> d<draws>` for Instruments traces
 DM_NVN_ENC_THREAD	player	`1` runs the replay's Metal encoding on a thread of its own while the submit thread goes on translating; on by default on iOS (`0` turns it off), off on macOS
+DM_NVN_FAMILY_NOCOMPRESS	switch	`0` lets textures of a resolution family (one storage, several sizes) use lossless compression again; on by default they are written uncompressed, as a size reading another's compressed blocks decodes garbage (ASTRAL CHAIN's glow after the pause menu)
 DM_NVN_FAST_WAKE	switch	`0` makes the game's `SyncWait`s wake on the commit feedback handler instead of the GPU's own signal of the fence (on by default)
 DM_NVN_FB_DSELF	switch	`0` takes a pool or dynamic-handle draw that writes depth itself as a depth reader, as before, so the next draw writing depth ends the pass; `ab` alternates with `DM_AB`
 DM_NVN_FB_SNAP	switch	Draws that sample a colour attachment of their own render pass: unset, those that write it (or follow a write in the pass) read a snapshot, reused until the game's next barrier; `0` none; `all` a fresh snapshot for every draw that samples one (slow, diagnostic, no tile reads)
@@ -190,9 +196,13 @@ DM_NVN_PREFETCH	switch	`0` turns off loading a program's shader libraries in the
 DM_NVN_PREFETCH_CPS	diagnostic	
 DM_NVN_PROF	diagnostic	`=1` wraps the implemented NVN functions in a timing wrapper and collects the time each takes during recording
 DM_NVN_PROGTRACE	diagnostic	`=<vertex keys,...>` logs matching ProgramSetShaders calls and their guest backtraces
+DM_NVN_RC_STALE	player	`1` (launcher: Skip hidden objects, experimental): a render condition whose samples-passed result has not landed is decided by the result that landed before it at that address (the same query a frame earlier) instead of drawing; objects coming into view can be drawn a frame late; off by default ([Occlusion conditions decided by the frame before's result](reference/rendering.md#occlusion-conditions-decided-by-the-frame-befores-result-experimental))
 DM_NVN_REGLUM	diagnostic	`=x0,y0,x1,y1:<file>` (normalized coordinates): on every present records the present number, time, mean luminance and a grayscale thumbnail of that region, to check animation speed against frame rate
+DM_NVN_RES_EVICT_MB	switch	`=<MB>`: turns the GPU memory guard on and makes it let go of what it can (idle sharing entries, spare textures, staging blocks) from that size; it never stops the game by itself. The launcher's Potato mode sets 4400
+DM_NVN_RES_LIMIT_MB	switch	`=<MB>` makes the GPU memory guard stop the game at that size instead of about 95% of Metal's working set, with the report of what the residency set holds (a low one tests the stop), and lets go of what it can from 84% of it; `0` turns the guard off. The guard runs only when this or `DM_NVN_RES_EVICT_MB` is set (kid-with-sword-remake V18)
 DM_NVN_RP_AREA	switch	`0` makes passes on targets of 16 M pixels or more cover the whole target, as before; by default a draw pass that loads what it keeps stops at the far corner of its scissor when that is at most half the target
 DM_NVN_RT_ALIAS	diagnostic	
+DM_NVN_RT_RECYCLE	switch	`0` makes each render target in a GPU-only pool its own Metal allocation, as before; by default it is placed in a heap of its own, and a freed one's heap is reused by the next target it fits (`ab` alternates it with the `DM_AB` phases)
 DM_NVN_RT_CONTINUE	switch	`0` ends the pass whenever the game sets render targets, as before; by default SetRenderTargets naming the open pass's targets continues the pass
 DM_NVN_RT_DROP	diagnostic	
 DM_NVN_RT_DROP_IDLE	diagnostic	
@@ -219,6 +229,8 @@ DM_NVN_TEXDUMP	diagnostic	`=<frame>:<path>`, `size=<W>x<H>:<path>` or `layers=<n
 DM_NVN_TEXINFO	diagnostic	`=<W>x<H>` logs storage and description of every texture of that size on first use, registration and initialization (pool, flags, packaged, non-zero bytes, swizzles)
 DM_NVN_TEXRAW	diagnostic	`=<serial>,…` or `info` (the textures `DM_NVN_TEXINFO` picked out): saves those textures' raw bytes at the `DM_NVN_TEXDUMP` frame, with a text header line
 DM_NVN_TEXSNAP	diagnostic	`=<in-frame pass index>,…`: with `DM_NVN_TEXDUMP`, copies those passes' colour attachments as they end and saves them with the end-of-frame dump
+DM_NVN_TEX_RECYCLE	switch	`1` puts a released texture of the fallback path into a bin, still resident, where the next texture of the same Metal description takes it; off by default (the launcher's Potato mode turns it on through `DM_NVN_TEX_RECYCLE_MB`), `0` keeps it off
+DM_NVN_TEX_RECYCLE_MB	switch	`=<MB>` (default 256): the most the bin of recycled textures (`DM_NVN_TEX_RECYCLE`) keeps, and setting it turns the bin on; it also keeps none older than 2 s, and none while the residency set is past 70 % of Metal's working set. The Potato mode sets 64
 DM_NVN_TEX_SOFT	diagnostic	
 DM_NVN_TEX_SOFT_ARRAYS	diagnostic	
 DM_NVN_TEX_SOFT_LEVELS	diagnostic	
@@ -261,12 +273,12 @@ DM_OODLE_MODULES	path	The rewritten modules the Mac host's Oodle tool mode loads
 DM_OODLE_SERVE	switch	`=1`: the host answers decode requests on stdin / stdout with the game's own Oodle (or LZ5) decoder from the guest main thread before the SDK starts, until stdin ends
 DM_OPMODE	player	The operation mode the game sees: `0` handheld, `1` console (default: the profile's `op_mode`, console unless set); read once at startup
 DM_PAD_MERGE	switch	`=1` merges every controller into player 1, as before, instead of giving each controller a player of its own (Mac and iOS)
-DM_RES_PRESET	player	The resolution preset of a game whose profile sets `res_presets on`: `0` Normal (the overlay's `<mode>/` folder: Ocarina of Time 1280×720 handheld, 1951×1098 docked), `1` Potato (its `potato-<mode>/` folder where it has one, 0.75 of the base, and graphics scale tier 2 unless `DM_GFX_SCALE` sets one: Ocarina of Time renders 960×540 into a 1280×720 frame); taken when the RomFS mounts ([hle_fs.c rom_overlay_set](../dm/host/hle_fs.c)); launcher: Game → Resolution
 DM_PAD_THEME	player	The touch controls' colours: `0` Classic (translucent white), `1` Forest (blue A, green B, yellow X / Y, red +, deep green shoulders, bronze D-pad, gold rims, all translucent); default the profile's `pad_theme`; launcher setting
 DM_PATCH_FRONT	switch	`=<bytes>`: the size of the patch area right before the module base for a long text (`BIG_TEXT`); set only by the rewriter's own rerun with the size it needs
 DM_PHONE_MOTION	switch	On iOS, whether the phone's own device motion drives player 1's six-axis sensor: `auto` (default) while no controller supplies fresh motion, `1` phone only, `0` never; each source keeps its own orientation
 DM_PICTURE_FIT	player	`fill` scales the 16:9 picture on the iPhone and iPad until it covers the screen in landscape and crops the edges (a portrait or tabletop split and a TV stay fitted); `fit` or unset, the largest 16:9 rectangle with black bars. Launcher and in-game menu setting
 DM_POOL_ANON	diagnostic	
+DM_POOL_ANON_MAX_MB	switch	`=<MB>` (off by default; the Potato mode sets 512): with the guest in files, a memory pool larger than that stays in the files instead of moving into anonymous memory
 DM_PREEMPT	switch	`0` / `1` overrides the profile's `core_preempt`: also check already-runnable higher-priority peers on the caller's core after every thread SVC
 DM_PRELOAD	diagnostic	Set: on the Mac, runs the host's early background loading (`dm_host_preload_start`) as the iOS app does, to exercise that path
 DM_PRESENT_FIFO	switch	`0` makes the display link take the newest queued frame each tick, as before; by default it shows frames in order, at most one tick behind
@@ -296,6 +308,7 @@ DM_PROGRAMS	path	Table of a game's programs on the Mac (`programs.tsv`: index, h
 DM_PROGRAM_ID	switch	`=<hex>`: the program ID the host reports from `svcGetInfo(ProgramId)` (default: the profile's `program_id`)
 DM_PSO_ARCHIVE	path	The folder of the per-game Metal 4 pipeline archive of pipeline bases (default `pso_archive/` beside `pso_user.tsv`); `off` keeps no archive
 DM_PSO_BUNDLE	path	The pipeline archive made offline (`<GPU architecture>.mtl4a`, `prebuilt.tsv`), read only; the iOS app and Mac launcher set it to their `pso/` folder; `off` ignores it
+DM_PSO_CAPTURE	diagnostic	`1` (one run): the pipeline archive's serializer also captures each base's descriptor, and each flush writes them as a Metal 4 pipelines script to `pso_capture/<file>.mtl4-json` beside `pso_archive/`, for compiling the bases with a vertex layout offline; bases with a layout from the device's own archive are captured again, so their binaries are written a second time
 DM_PSO_GPUS	switch	`build_ipa.sh`: the GPU architectures, comma-separated, to build the offline pipeline archive for (`none` builds none); unset, a profile with `pso_mtl4 on` gets its `pso_gpu` list or `g18p` when absent; profiles with `pso_mtl4 off` get none
 DM_PSO_HYBRID	switch	`0`: a draw whose pipeline is not built yet waits for it instead of drawing with its shader pair's pulling pipeline meanwhile (on by default with the Metal 4 path)
 DM_PSO_IOS_MIN	switch	`build_ipa.sh`: the minimum iOS version of the offline pipeline archives (default the SDK's major version); a device of another major version cannot open them and builds the bases itself
@@ -311,6 +324,7 @@ DM_PSO_PULL_ALL	diagnostic	`=1`: every draw that has a pulling pipeline draws wi
 DM_PSO_RECORD	path	`=<file>`: appends the shaders and pipelines used in the run to that file, for re-recording the prewarm manifest
 DM_PSO_USER	path	The per-device list of shaders and pipelines built on the spot (default: `pso_user.tsv` in the parent of `DM_SAVE`)
 DM_PSO_WAITLOG	diagnostic	`=1` logs each draw that waited more than 20 ms for its pipeline, with its shader pair and why no stand-in served it
+DM_PSO_WARM_ONLY	player	`1`: the pipeline prewarm builds its lists in the background on one utility-QoS thread and keeps nothing, only filling the system's Metal shader cache, so a pipeline the game asks for later is made from it in well under a millisecond; never before the first frame (overrides the prepare step)
 DM_QOS_EDGES	switch	`=e1,e2`: the Switch priority edges of `DM_QOS_MAP` (default `44,59`)
 DM_QOS_MAP	switch	`=1` maps guest thread priority to QoS class: ≤ 44 user-interactive, 45–59 user-initiated, the rest utility (off by default: every guest thread runs user-interactive)
 DM_REC	diagnostic	`=<file>`: writes player 1's physical input (keyboard, mouse touches, controllers; never `DM_KEYS` / `DM_CTL`) to the file as `DM_KEYS` steps in presented frames, for replaying a run (`DM_KEYS=@<file>`)
@@ -328,6 +342,7 @@ DM_RESOURCE_SHADERS	path	iOS shader library folder or one file, written to `Gen/
 DM_RESOURCE_TITLE	switch	Game profile title ID, written to `Gen/resources.env` by `gen_resources.py`; with `DM_COPY_ROMFS=NO` the copy phase puts it in the `title=` field of the app's `romfs.id`
 DM_RESOURCE_VERSION	switch	Display version, written to `Gen/resources.env` by `gen_resources.py`; with `DM_COPY_ROMFS=NO` the copy phase puts it in the `version=` field of the app's `romfs.id`
 DM_RES_CHECK	diagnostic	`=1` prints the first 40 textures or buffers a shader reaches through its argument block that are not in the residency set (textures attributed to their parent allocation)
+DM_RES_PRESET	player	The resolution preset of a game whose profile sets `res_presets on`: `0` Normal (the overlay's `<mode>/` folder: Ocarina of Time 1280×720 handheld, 1951×1098 docked), `1` Potato (its `potato-<mode>/` folder where it has one: 0.6 of the base, 1152×648 handheld, 1536×864 docked); taken when the RomFS mounts ([hle_fs.c rom_overlay_set](../dm/host/hle_fs.c)); launcher: Game → Resolution
 DM_REWRITE_J	switch	`=<positive integer>`: worker processes per module for `patch_nso.py`'s x18 scan and spin wait search; `=1` runs serially. Default: one per core directly, an automatic per-module budget in the NSP script. An explicit value overrides that budget
 DM_ROMFS	path	The game's RomFS folder, mounted read-only as `rom` (default `$DM_ROOT/romfs`); the Mac launcher, the iOS app and the NSP script set it
 DM_ROMFS_OVERLAY	path	`=<dir>[:<dir>…]`: RomFS reads look in these folders first, in order, and fall back to `DM_ROMFS` (for a modified copy of some files)
@@ -382,6 +397,8 @@ DM_TEST_SWKBD_LAG_MS	diagnostic	`=<ms>` sleeps that long between the keyboard ha
 DM_TEST_TRANSFORM_FEEDBACK	test	Path to the native t_transform_feedback executable used by the Python feedback tests
 DM_TEST_UP_LEAK	diagnostic	`=1` keeps the old upload staging block instead of retiring it, as before the fix, to measure the leak
 DM_TEST_UP_LOST	diagnostic	`=<batch index>` treats that batch of uploads as dropped, to exercise the re-upload path
+DM_TEX_LAZY	switch	`1` / `2` (off by default; the launcher's Potato mode sets `2`): a pool walk makes no host texture for an ID whose texture has none yet, any ID with `1`, only IDs in CPU_NO_ACCESS pools with `2`; the entry is the dummy until a direct binding makes the texture (`nvn_mtl.m` `pool_entry`)
+DM_TEX_LAZY_MIN_KB	switch	`=<KB>`: with `DM_TEX_LAZY`, only textures whose storage is at least that size are left without a host texture (the Potato mode sets 4096)
 DM_TEX_RELEASE	switch	`1` gives back the guest copy of a texture's storage in a `CPU_NO_ACCESS` pool once its upload (or its creation, for a GPU-only texture) has completed on the GPU: its whole pages become zero pages; `2` also releases still-protected pages of CPU-visible textures uploaded by the tracked path (a later CPU write faults and re-uploads as before); `probe` only counts; off by default ([memory](reference/memory.md#the-guest-copy-of-uploaded-textures-given-back))
 DM_TEX_RELEASE_METHOD	diagnostic	`free` releases with `madvise(MADV_FREE_REUSABLE)` instead of fresh zero pages (`DM_TEX_RELEASE`)
 DM_TEX_REL_DONOR	switch	`0` lets a texture made again over storage `DM_TEX_RELEASE` gave back read its zero pages; by default it is a GPU copy of the texture released there when that one has the same description, still has its host texture and its storage was not written since ([memory](reference/memory.md#the-guest-copy-of-uploaded-textures-given-back))
@@ -402,6 +419,8 @@ DM_WATCH	diagnostic	`=<s>` dumps all threads after that many seconds (SIGALRM) a
 DM_WATCH_SAMPLE	diagnostic	`=<path>` (Mac): when the stall watchdog fires, samples the process for 1 s with `/usr/bin/sample` and writes the thread stacks to that path
 DM_WATCH_STALL	diagnostic	`=<s>`: when the frame loop makes no progress for that long (default 15 with `DM_WATCH`), logs a red line, dumps the threads and exits
 DM_WEB_LOG	diagnostic	`1` logs each key an offline HTML page is given and where the focus is after it
+DM_WIDE_ASPECT	switch	the screen's width / height for Wide view, 1.8 to 2.6; the iOS front end sets it from its window when `DM_WIDE_VIEW=1`
+DM_WIDE_VIEW	switch	`1`: games with wide-view stubs (Ocarina of Time v131072, patches.py wide_view) render the screen's shape instead of 16:9 (launcher: Wide view)
 DM_WINDOW	switch	When set (to any value, `0` included) opens a Mac window with keyboard and controller input; unset runs headless with the guest on the current thread; the Mac launcher sets it
 DM_WINDOW_TOP	diagnostic	`1` (Mac, with `DM_WINDOW`) orders the game window in front without activating it and keeps it above other apps' windows, so a covered window does not slow the run; `regress.py` sets it
 DM_XCODE_DERIVED_DATA	path	Xcode derived data folder for `build_ipa.sh` (default `$W/build/ios/xcode-dd`); the NSP script points it into the game's build folder

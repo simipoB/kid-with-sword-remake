@@ -51,6 +51,29 @@ XC = ['--msl', '--msl-version', '20300', '--msl-argument-buffers', '--msl-textur
 # GX lighting takes max(0, NaN) from light directions left at zero, and the half of Mario its fill light faces came out white on the iPhone (GitHub issue 72; vk_shaders.py PRECISE)
 def precise(msl): return re.sub(r'\bfast::(min|max|clamp)\(', r'precise::\1(', msl)
 
+# spirv-cross writes OpUMulExtended / OpSMulExtended as calls of an optnone template, spvMulExtended, as Metal's compiler may fail on an inlined mulhi (spirv_msl.cpp,
+# SPVFuncImplMulExtended). The barrier keeps every product a call that is never folded: Switch 2 shaders divide by constants through the high word of a product (Ocarina of Time
+# has 348,587 such calls, all scalar uint by a literal, 98% by a power of two), and its NDVE title movie ran 6.9% faster on an M1 Pro with its 5,679 others inline (nxnative 37f076a5, PR #1741).
+# Scalar operands get overloads that take the halves of the 64-bit product, with no mulhi; overload resolution prefers them to the template, and vectors keep the template.
+def mul_extended(msl):
+    helper = re.compile(r'template<typename T, typename U, typename V>\s*\[\[clang::optnone\]\] T spvMulExtended\(V l, V r\)\s*\{\s*return T\{U\(l \* r\), U\(mulhi\(l, r\)\)\};\s*\}\n')
+    found = list(helper.finditer(msl)) if 'spvMulExtended' in msl else []
+    if len(found) != 1 or 'spvMulExtended(uint l, uint r)' in msl: return msl
+    scalar = ''.join(f'template<typename T, typename U> static inline __attribute__((always_inline)) T spvMulExtended({t} l, {t} r) {{ {w} p = {w}(l) * {w}(r); return T{{U(p), U(p >> 32)}}; }}\n'
+                     for t, w in (('uint', 'ulong'), ('int', 'long')))
+    return msl[:found[0].end()] + scalar + msl[found[0].end():]
+# A float add to storage memory with no result read (RED.F32, InstEmitMemory EmitAtomicAddF32) reaches the MSL as a compare-and-swap loop on the word: MSL 2.3 has no float atomics.
+# Metal has had atomic_float on device memory since MSL 3.0, and the compile takes the default language version. agl's scene analysis adds every thread's luminance into the same
+# few words this way, so its loops retried for each other: Ocarina of Time's 6e28359aa3558f61 (one workgroup of 256 threads, four words) took 0.25 ms a frame and 1bba09ec4bc8ff67
+# 0.40 ms on a MacBook Air M4, under 0.13 ms each as one atomic_fetch_add; the picture's exposure the same. Only the exact loop the translator writes is replaced
+FLOAT_ADD = re.compile(r'(?m)^( *)bool (_\d+);\n\1do\n\1\{\n\1    float (_\d+) = as_type<float>\((?P<addr>[^\n]*?)\);\n\1    float (_\d+) = \3 \+ (?P<val>[^;\n]+);\n'
+                       r'\1    uint (_\d+) = as_type<uint>\(\3\);\n\1    uint (_\d+);\n\1    do\n\1    \{\n\1        \8 = \7;\n'
+                       r'\1    \} while \(!atomic_compare_exchange_weak_explicit\(\(device atomic_uint\*\)&(?P<addr2>[^\n]*?), &\8, as_type<uint>\(\5\), memory_order_relaxed, memory_order_relaxed\) && \8 == \7\);\n'
+                       r'\1    uint (_\d+) = \8;\n\1    \2 = int\(\10\) != as_type<int>\(\3\);\n\1\} while \(\2\);\n')
+def float_add_msl(msl):
+    return FLOAT_ADD.sub(lambda m: m.group(0) if m.group('addr') != m.group('addr2') else
+                         f"{m.group(1)}atomic_fetch_add_explicit((device atomic_float*)&{m.group('addr')}, {m.group('val')}, memory_order_relaxed);\n", msl)
+
 # Ampere HMMA.16816 with an f16 accumulator (agl's upscaler networks) reaches the MSL as a call of dmsh_hmma16816_f16(lane, block, A0..A3, B0, B1, C0, C1, out D1) → D0, with
 # the subgroup's 256-word block of the scratch shared memory as the last argument (InstEmitAmpereTensor.AHmma, TensorPass, HelperFunctionManager.GenerateHmma16816F16). The
 # translator's body computes D lane by lane from the block; here it becomes simdgroup_matrix code over the same block: A row-major (halves 0..255, 16 a row), B transposed
@@ -120,6 +143,53 @@ def first_store(msl, local):
     rest = msl[at:]
     if not stores or len(stores) > 4 or re.search(r'if \(%s\)' % guard, rest): return msl, []
     return out + rest, stores
+# Shared memory byte and half-word stores (STS.U8 / STS.U16, and the bytes a task or mesh shader writes to its stage memory: its primitive indices and count) reach the MSL as calls of
+# dmsh_shared_store8_<id> / dmsh_shared_store16_<id>(byte offset, value, the shared memory array) (HelperFunctionManager.GenerateSharedStore). The translator's body is upstream Ryujinx's
+# compare-and-swap loop on the word, as SPIR-V has no narrower store into a uint array; Metal's threadgroup memory takes byte stores, so the body becomes one store of the byte or half-word.
+# That is the console's store: no atomic, and two lanes writing the same byte leave one of their values. In the loop, the 32 lanes of a mesh shader writing neighbouring bytes contended four
+# to a word and retried; Ocarina of Time's foliage mesh shaders (ten such stores a lane) took 8.3-8.6 ms of GPU a frame on an M3 Pro (shaders.md, Stage memory byte stores through a
+# compare-and-swap loop). The narrow pointer aliases the uint array for the compiler's type-based alias analysis (uchar, and the may_alias ushort, are "omnipotent char"), so the word loads
+# around the store keep their order. tg_spill later turns the address space to device with the rest of the function
+def split_params(text):   # commas inside template arguments (spvUnsafeArray<uint, N>) do not separate parameters
+    params, depth, cur = [], 0, ''
+    for ch in text + ',':
+        depth += {'<': 1, '>': -1}.get(ch, 0)
+        if ch == ',' and depth == 0: params.append(cur.strip()); cur = ''
+        else: cur += ch
+    return params
+
+def block_end(src, start):   # the index of the brace closing the block opened at src[start]
+    depth = 0
+    for i in range(start, len(src)):
+        depth += {'{': 1, '}': -1}.get(src[i], 0)
+        if depth == 0: return i
+    raise ValueError('block not closed')
+
+SHARED_STORE = re.compile(r'\nvoid (dmsh_shared_store(8|16)_\d+)\(([^)]*)\)\n\{')
+SHARED_ALIAS = 'typedef ushort __attribute__((may_alias)) dm_ushort_alias;   // a half-word that may alias the shared memory\'s words (see shared_store_msl)\n'
+def shared_store_msl(msl):
+    if 'dmsh_shared_store' not in msl: return msl
+    found = list(SHARED_STORE.finditer(msl))
+    if not found: raise ValueError('dmsh_shared_store: no definition of the expected form')
+    out, at = [], 0
+    for m in found:
+        params = split_params(m.group(3))
+        scalar = [re.fullmatch(r'thread const u?int& (\w+)', p) for p in params[:2]]
+        arr = re.fullmatch(r'(threadgroup|device) spvUnsafeArray<uint, \d+>& (\w+)', params[2]) if len(params) == 3 else None
+        if not arr or not all(scalar): raise ValueError('dmsh_shared_store: unexpected parameters ' + m.group(3)[:160])
+        off, val = scalar[0].group(1), scalar[1].group(1)
+        space, mem = arr.groups()
+        store = (f'(({space} uchar*)&{mem}[0])[uint({off})] = uchar(uint({val}));' if m.group(2) == '8' else
+                 f'(({space} dm_ushort_alias*)&{mem}[0])[uint({off}) >> 1u] = ushort(uint({val}));')   # a half-word store is aligned (Maxwell faults on a misaligned one)
+        out.append(msl[at:m.end()] + '\n    ' + store + '\n')
+        at = block_end(msl, m.end() - 1)
+    out.append(msl[at:])
+    src = ''.join(out)
+    if any(m.group(2) == '16' for m in found):
+        u = src.find('using namespace metal;\n')
+        if u < 0: raise ValueError('dmsh_shared_store: no using namespace metal')
+        u += len('using namespace metal;\n'); src = src[:u] + SHARED_ALIAS + src[u:]
+    return src
 # Compute shared memory past Metal's limit: Apple's GPUs give a kernel 32 KB of threadgroup memory (maxThreadgroupMemoryLength), and Metal refuses a pipeline that declares more, while Ampere
 # gives up to 100 KB. Mario Kart World's DrivePassShaderDefault has 168 compute shaders of 48 KB (spvUnsafeArray<uint, 12288>), seven of them run on the way to the first race; refused, their
 # dispatches were skipped. Such a kernel takes its threadgroup arrays from a device buffer the host binds (abi.TG_SLOT): one slice of the arrays' total per workgroup, at the workgroup's index in
@@ -1390,8 +1460,12 @@ def finish(key, w, j, c1):
     try: src = dmsh_atomic.check_msl(src)
     except ValueError as e: return 'image atomic MSL failed', str(e), None
     src = precise(src)   # min / max / clamp with Maxwell's NaN results (see precise)
+    src = mul_extended(src)   # scalar extended products without the optnone wrapper (see mul_extended)
+    src = float_add_msl(src)   # a float add's compare-and-swap loop as one native atomic add (see float_add_msl; nxnative PR #1930)
     try: src = hmma_msl(src)   # Ampere HMMA through simdgroup_matrix (see hmma_msl)
     except ValueError as e: return 'HMMA rewrite failed', str(e)[:160], None
+    try: src = shared_store_msl(src)   # shared memory byte and half-word stores as Metal byte stores (see shared_store_msl)
+    except ValueError as e: return 'shared store rewrite failed', str(e)[:160], None
     try: src = pool_arrays(src)   # handles traced to no slot read the pools the replay keeps (see pool_arrays)
     except ValueError as e: return 'pool rewrite failed', str(e)[:160], None
     res = json.load(open(os.path.join(w, key + '.res.json')))

@@ -23,7 +23,7 @@ int front_screen_variable_refresh(void);
 // The frame rate the display link paces the game at (60, 30, 120; nvn_mtl.m link_sync): in fullscreen, a screen whose refresh rate is not a multiple of it is switched, while the game runs,
 // to a mode of the same size whose rate is, and back when the window leaves fullscreen or that screen (front_mac.m; none on iOS). Called from the present thread
 void front_screen_match(int fps);
-// The shape of the picture the game presents (nvn_mtl.m present_now: the valid rectangle of the presented texture, w x h), called when its width / height changes: the front end
+// The shape of the picture the game presents (nvn_mtl.m present_now, present_shape: the layer's, not the crop's, w x h), called when its width / height changes: the front end
 // lays the picture out in that shape instead of 16:9, so a profile with screen_aspect under DM_SCREEN_ASPECT (1920x1344) fills a 1.43:1 screen and touches map onto the picture
 // as drawn. Before the first call the picture is 16:9. Called from the present thread; the front end switches to its main thread and does not block
 void front_picture_shape(int w, int h);
@@ -61,6 +61,12 @@ void dm_touch_script(const dm_touch *t, int n);   // scripted touches (DM_KEYS, 
 // Timing: when a save write fails (disk full etc.) within one of the game's save transactions (between two Commits), so that this Commit is refused and the previously committed save is unchanged, it is called once per refused transaction;
 // the next transaction that succeeds commits as usual, and the front end need not do any recovery. err = the first failing errno (ENOSPC = 28 means out of space). Called on the game thread; the front end switches to the main thread itself and must not block
 void front_save_failed(int err);
+
+// GPU memory nearly full (called by the graphics backend's nvn_mtl.m guard_stop, once): the game's GPU memory reached about 95% of Metal's working set, the most the driver can wire, and nothing more
+// could be let go. Past the working set the submit thread would wait in the kernel, unkillable, with the Mac frozen. The Mac front end stops the game's GPU work and sound, leaves full screen, says
+// why in an alert and quits as ⌘Q does, so the launcher's work after the game runs; without a window, and on iOS, the run ends with the host's graceful exit (the weak default in nvn_mtl.m).
+// used_mb, limit_mb: what is allocated, and the working set. Any thread; the front end switches to its main thread and must not block
+void front_gpu_memory_stop(unsigned long long used_mb, unsigned long long limit_mb);
 
 // Offline HTML pages (the web applet's offline pages; hle_web.c): a web view over the game picture (web_apple.m, Mac and iPhone). Called from guest threads; the front end works on its main
 // thread. front_web_open: dir = the folder the document path is relative to (an HtmlDocument's html-document), path = the document path with its query, callback = the URL prefix whose

@@ -161,10 +161,16 @@ def header_one(g):
     if pi not in ('game', 'display'): sys.exit(f'{g.id}: present_interval must be game or display: {pi}')
     ft = g.get('fps_target', '0')   # frame rate cap of the rewriter's frame step (FRAME_STEP in the profile's patches.py: Tears of the Kingdom 1.4.3, Breath of the Wild 1.9.0) or of the engine's own frame limit (hle_fpslock.c): 0 = the game's own step, 30 / 60
     if ft not in ('0', '30', '60'): sys.exit(f'{g.id}: fps_target must be 0, 30 or 60: {ft}')
+    pot = g.get('potato', '')   # the launcher's Potato mode (DM_PRESET=potato; loader.c dm_preset_apply): <VAR>=<value>,... set when the game starts; none = no Potato row (kid-with-sword-remake)
+    if pot and not all(re.fullmatch(r'DM_[A-Z0-9_]+=[^,\s"]+', kv) for kv in pot.split(',')): sys.exit(f'{g.id}: potato is <VAR>=<value>,...: {pot}')
     fm = g.get('fps_max', '60')   # the highest rate fps_target and the player's Frame rate may take: 120 only for a game checked at that speed (hle_nvn.c fps_high)
     if fm not in ('60', '120'): sys.exit(f'{g.id}: fps_max must be 60 or 120: {fm}')
     fh = g.get('fps_hold', 'on')   # whether the frame step may hold a frame longer than the cap's vsyncs when frames come late (hle_nvn.c fstep_tick): on / off
     if fh not in ('on', 'off'): sys.exit(f'{g.id}: fps_hold must be on or off: {fh}')
+    fpb = g.get('fps_payback', 'on')   # whether the frame step pays back real time a late frame lost with a step one vsync longer than the hold (hle_nvn.c fstep_payback, nvn_fstep.h nopay): on / off
+    if fpb not in ('on', 'off'): sys.exit(f'{g.id}: fps_payback must be on or off: {fpb}')
+    ll30 = g.get('link_latency30', '1')   # the display link's frame latency at a 30 fps cap (nvn_mtl.m link_latency; DM_PRESENT_LATENCY overrides): 1 / 2
+    if ll30 not in ('1', '2'): sys.exit(f'{g.id}: link_latency30 must be 1 or 2: {ll30}')
     utp = g.get('ue_texture_pool', '0')   # Unreal's r.Streaming.PoolSize in MB, raised to this on the Mac (hle_uecvar.c; DM_UE_TEXTURE_POOL overrides, and turns it on for iOS): 0 = the game's own pool
     if not utp.isdigit(): sys.exit(f"{g.id}: ue_texture_pool must be megabytes (0 = the game's own pool): {utp}")
     ufc = g.get('ue_fps_cvar', 't.MaxFPS')   # the Unreal console variable the host writes fps_target into (hle_fpslock.c; found by name by the rewriter, ue_cvar.py NAMES): a game's own frame limit its settings apply to t.MaxFPS
@@ -188,6 +194,10 @@ def header_one(g):
     if pl not in ('simple', 'full', 'touch', 'native'): sys.exit(f'{g.id}: pad_layout must be simple, full, touch or native: {pl}')   # touch = Tap (no control: every touch goes to the game's touch screen); native = a mobile-game layout in glass (a floating left stick, the camera on the right half, icon keys with the button's letter)
     fwg = g.get('frame_wg', 'off')   # Deadline boost's default (hle_nvn.c fwg_get, the frame workgroup; DM_FRAME_WG and the launcher override): on keeps the frame's threads on the performance cores
     if fwg not in ('off', 'on'): sys.exit(f'{g.id}: frame_wg must be off or on: {fwg}')
+    rsd = g.get('render_scale_default', '')   # the Render scale slider's default for this game (settings.py; loader.c dm_fps_state_apply takes it when DM_RENDER_SCALE is unset): 0.25 to 1.0
+    try: rsd_v = float(rsd) if rsd else 1.0
+    except ValueError: sys.exit(f'{g.id}: render_scale_default must be a number: {rsd}')
+    if not 0.25 <= rsd_v <= 1.0: sys.exit(f'{g.id}: render_scale_default must be 0.25 to 1.0: {rsd}')
     rsp = g.get('res_presets', 'off')   # the launcher's Resolution row (DM_RES_PRESET, hle_fs.c rom_overlay_set): on when the app's romfs_overlay has potato-<mode>/ folders beside <mode>/ (Ocarina of Time: 0.6 of the base)
     if rsp not in ('off', 'on'): sys.exit(f'{g.id}: res_presets must be off or on: {rsp}')
     pth = g.get('pad_theme', 'classic')   # the virtual gamepad's colours (DmGamepad.m theme_init; the launcher's Touch controls style, DM_PAD_THEME, overrides): classic = translucent white, forest = the N64-and-woods palette
@@ -279,8 +289,12 @@ def header_one(g):
          f'#define DM_GAME_CORE_PREEMPT {int(cp == "on")}',
          f'#define DM_GAME_ALLOC_BIG_ALIGN {int(aba == "on")}',
          f'#define DM_GAME_FPS_TARGET {int(ft)}',
+         f'#define DM_GAME_POTATO "{pot}"',   # the Potato mode's settings (loader.c dm_preset_apply)
+         f'#define DM_GAME_POTATO_N {len(pot.split(",")) if pot else 0}',   # how many: the launcher's Potato mode row shows when there are any
          f'#define DM_GAME_FPS_MAX {int(fm)}',
          f'#define DM_GAME_FPS_HOLD {int(fh == "on")}',
+         f'#define DM_GAME_FPS_PAYBACK {int(fpb == "on")}',
+         f'#define DM_GAME_LINK_LATENCY30 {int(ll30)}',
          f'#define DM_GAME_UE_TEXTURE_POOL {int(utp)}',
          f'#define DM_GAME_UE_FPS_CVAR {q(ufc)}',
          f'#define DM_GAME_PRESENT_SNAP {int(ps == "on")}',
@@ -290,6 +304,7 @@ def header_one(g):
          f'#define DM_GAME_PAD_LAYOUT {("simple", "full", "touch", "native").index(pl)}',
          f'#define DM_GAME_PAD_THEME {("classic", "forest").index(pth)}',
          f'#define DM_GAME_RES_PRESETS {int(rsp == "on")}',
+         f'#define DM_GAME_RENDER_SCALE_DEFAULT {rsd_v!r}f',
          f'#define DM_GAME_FRAME_WG {int(fwg == "on")}',
          f'#define DM_GAME_OPMODE {int(om == "console")}',
          f'#define DM_GAME_PERF_BOOST {int(pm == "boost")}',

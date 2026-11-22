@@ -3,7 +3,7 @@
 The screen before the game starts shows the settings the game supports. A setting that only matters while another is on appears under it and disappears when that one is turned off. Tap **Play** to start; the app remembers your choices for the next start. All settings are on one scrollable screen, under **Game**, **Controls** and **Performance**. Tap a menu or move a slider there; no settings page needs opening. **Upscaling** is in **Game**, beside **Console mode**. A Mac app shows the same settings in a [window of its own](#the-mac-settings-window).
 
 - [Tested defaults](#tested-defaults)
-- [Game](#game): [Frame rate](#frame-rate), [Render scale](#render-scale), [Console mode](#console-mode), [Upscaling](#upscaling), [Game's upscaler](#games-upscaler), [Game language](#game-language), [Picture](#picture), [Frame-rate counter](#frame-rate-counter)
+- [Game](#game): [Frame rate](#frame-rate), [Frame generation](#frame-generation), [Render scale](#render-scale), [Console mode](#console-mode), [Upscaling](#upscaling), [Game's upscaler](#games-upscaler), [Game language](#game-language), [Picture](#picture), [Frame-rate counter](#frame-rate-counter)
 - [Controls](#controls): [Touch feedback](#touch-feedback), [Game rumble](#game-rumble), [Rumble strength](#rumble-strength), [Rumble cutoff](#rumble-cutoff)
 - [Performance](#performance): [Frame buffering](#frame-buffering), [Metal 4 pipelines](#metal-4-pipelines), [Pipeline prebuild](#pipeline-prebuild), [Encode thread](#encode-thread), [Hold frames when late](#hold-frames-when-late), [Performance HUD](#performance-hud), [Reset to tested defaults](#reset-to-tested-defaults)
 - [The Mac settings window](#the-mac-settings-window): [Display mode](#display-mode)
@@ -26,6 +26,15 @@ A Mac app carries the same list (`Contents/Resources/dm/launcher.json`), without
 Games whose speed the app controls (Breath of the Wild, Tears of the Kingdom and a few others) offer **30 fps** or **60 fps**. 60 is smoother; 30 is what the Switch ran and uses less power, so the phone stays cooler and the battery lasts longer. The game runs at real speed either way.
 
 On a Mac, a game checked at that speed (Fire Emblem Fortune's Weave, Mario & Luigi: Brothership) also offers **120 fps**. It needs a screen that shows 120 Hz, and uses more GPU and power. When frames do not fit, during movies, or on a slower screen, the game drops to 60 for a while, so it keeps its real speed. If you see the frame rate move between 60 and 120 and would rather it stayed still, choose 60.
+
+### Frame generation
+
+Offered with **30 fps**, for games drawn with NVN. The game draws 30 frames a second and the screen shows 60: between each two of the game's frames, MetalFX (Apple's frame interpolation) makes the one halfway and shows it first. Motion looks like 60 fps for about the work and heat of 30.
+
+- **Cost:** some GPU time for each made frame (a few milliseconds), and more input delay than real 60 fps: each frame waits half a frame (about 17 ms) for the one made before it. Against plain 30 fps the delay can even be shorter, as the screen then updates every 17 ms instead of every 33. Fast motion can smear or wobble, mostly at the edges of moving things; the HUD can too when a lot moves behind it.
+- **When frames drop** (a hot phone, a busy scene), it pauses and shows the game's own frames until they come in time again, so the picture does not flicker between made and real frames.
+- **When to use it:** when 60 fps makes the phone hot or drops frames, and 30 looks too choppy. It needs iOS 26 or macOS 26 and a device with MetalFX frame interpolation; without it the game shows its own 30 frames.
+- **On a Mac:** the same, on a 60 Hz screen or one that runs at a multiple of 60.
 
 ### Render scale
 
@@ -207,13 +216,13 @@ Apple's performance overlay over the game: frame rate, frame and GPU times, memo
 
 ### Reset to tested defaults
 
-Sets every setting back to the game's tested default; **Play** then forgets your choices, so those defaults apply, and those of later builds too ([Tested defaults](#tested-defaults)). Settings fixed by `Documents/env.txt` stay as the file says.
+Sets every setting back to the game's tested default; **Play** then forgets your choices, so those defaults apply, and those of later builds too ([Tested defaults](#tested-defaults)). Settings `Documents/env.txt` sets go back to the file's value.
 
 ## The Mac settings window
 
 A Mac app ([A Mac app](development.md#a-mac-app)) shows its settings in a window before the game starts. They are the same settings as on the iPhone, with the same defaults. The window shows the most used ones first: **Frame rate**, **Render scale**, **Console mode**, **Game language**, **Display mode** and **Game rumble**, when the game has them. **Render scale** shows the picture's size in pixels beside the percentage for the chosen **Console mode**, when the game's profile has it (Breath of the Wild: 1600 × 900 docked, 1280 × 720 handheld at 100 %). The others are under **Advanced settings**, in the usual sections, with **Reset to tested defaults**. The window remembers whether Advanced settings is open. **Touch feedback** and **Picture** are only on the iPhone.
 
-Click **Play** (or press Return) to start the game. **Quit**, ⌘Q or closing the window ends the app without the game. The app remembers your choices for that game, and a game started without the window, from a front end or with the window turned off, uses them too ([Saved choices](frontends.md#saved-choices)). A setting fixed by an `env.txt` or by the program that started the app is shown greyed out.
+Click **Play** (or press Return) to start the game. **Quit**, ⌘Q or closing the window ends the app without the game. The app remembers your choices for that game, and a game started without the window, from a front end or with the window turned off, uses them too ([Saved choices](frontends.md#saved-choices)). A setting fixed by the program that started the app is shown greyed out; one an `env.txt` sets starts at the file's value and can still be changed.
 
 Turn off **Show this window at launch** to start the game at once with your choices. Hold Option while the app opens to see the window again. `DM_LAUNCHER=0` in the app's `env.txt` (`~/Library/Application Support/nxnative/<title ID>/env.txt`) or in its environment, or opening it with `open <app> --args --no-launcher`, also skips the window; your choices still apply. `DM_SAVED_CHOICES=0` starts with the tested defaults instead.
 
@@ -247,7 +256,7 @@ Connect a TV or monitor by cable, or start Screen Mirroring to an Apple TV or Ai
 
 ## Settings in a file
 
-A line like `DM_PRESENT_SNAP=0` in `Documents/env.txt` (in the Files app, under the app's name) sets a setting from the file: the settings screen shows it greyed out, and the file wins over your choice and the game's default. Fully close and reopen the app after editing the file. The variables:
+A line like `DM_PRESENT_SNAP=0` in `Documents/env.txt` (in the Files app, under the app's name) sets a setting from the file: the settings screen starts that row at the file's value instead of the game's default, and you can still change it there; a choice you make wins over the file, and **Reset to tested defaults** goes back to the file's value. Fully close and reopen the app after editing the file. The variables:
 
 | Setting | Variable | Values |
 |---|---|---|

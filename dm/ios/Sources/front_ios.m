@@ -150,6 +150,14 @@ static void launcher_done(void) { [g_root startGame]; }
     front_hud_env();   // before the process's first Metal device, which reads MTL_HUD_ENABLED (an env file's DM_METAL_HUD sets it in main.m already; GitHub issue #840)
     const char *dev = front_ios_device_check();   // that first device: a GPU without BC textures is refused here, not at launch, so the launcher's HUD switch counts
     if (dev) { [self showHint:[NSString stringWithFormat:@"This device is not supported.\n%s", dev]]; return; }   // the host does not start
+    {   // Wide view (DM_WIDE_VIEW): the app window's own shape, for a window wider than 16:9 (a regular iPhone); an iPad's window keeps 16:9. Before the host writes the state page
+        const char *wv = getenv("DM_WIDE_VIEW");
+        if (wv && !strcmp(wv, "1")) {
+            CGSize sz = self.view.window ? self.view.window.bounds.size : UIScreen.mainScreen.bounds.size; double r = MAX(sz.width, sz.height) / MAX(MIN(sz.width, sz.height), 1);
+            if (r >= 1.8 && r <= 2.6) { char v[16]; snprintf(v, sizeof v, "%.3f", r); setenv("DM_WIDE_ASPECT", v, 1); LOG("front end: wide view: window %.0fx%.0f points (%.3f:1)", sz.width, sz.height, r); }
+            else LOG("front end: wide view: window %.0fx%.0f points (%.3f:1) is not wider than 16:9, kept 16:9", sz.width, sz.height, r);
+        }
+    }
     self.fill = dm_picture_fill(getenv("DM_PICTURE_FIT"));
     if (self.fill) LOG("front end: picture Fill (DM_PICTURE_FIT=fill), the 16:9 picture covers the screen in landscape and its edges are cropped");
     self.view.clipsToBounds = YES;   // with Fill the game view is larger than the screen

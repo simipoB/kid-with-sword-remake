@@ -129,6 +129,12 @@ t_mesh_indirect: t_mesh_indirect.m $(MTL_T_DEP)
 t_dispatch_overlap: t_dispatch_overlap.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_dispatch_overlap.m $(MTL_T_SRC) $(FW)
 check_t_dispatch_overlap: RUN_ENV = MTL_DEBUG_LAYER=1
+t_res_guard: t_res_guard.m $(MTL_T_DEP)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_res_guard.m $(MTL_T_SRC) $(FW)
+.PHONY: check_t_res_guard
+check_t_res_guard: t_res_guard
+	MTL_DEBUG_LAYER=1 ./t_res_guard
+	MTL_DEBUG_LAYER=1 ./t_res_guard stuck
 .PHONY: check_t_cpu_tex
 check_t_cpu_tex: t_cpu_tex
 	MTL_DEBUG_LAYER=1 ./t_cpu_tex --metal
@@ -212,6 +218,12 @@ check_t_present_snap: t_present_snap
 	DM_NVN_ENC_THREAD=0 MTL_DEBUG_LAYER=1 ./t_present_snap pacing
 	DM_NVN_ENC_THREAD=1 MTL_DEBUG_LAYER=1 ./t_present_snap resize
 	DM_NVN_ENC_THREAD=0 MTL_DEBUG_LAYER=1 ./t_present_snap resize
+t_framegen: t_framegen.m $(MTL_T_DEP)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_framegen.m ../../host/crash.c ../../host/hle_bigstack.c t_host_stubs.c $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
+.PHONY: check_t_framegen
+check_t_framegen: t_framegen
+	MTL_DEBUG_LAYER=1 ./t_framegen
+	MTL_DEBUG_LAYER=1 ./t_framegen size
 t_reorder_chain: t_reorder_chain.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_reorder_chain.m $(MTL_T_SRC) $(FW)
 check_t_reorder_chain: RUN_ENV = MTL_DEBUG_LAYER=1
@@ -455,6 +467,18 @@ check_t_alias_retire: t_alias_retire
 check_t_image_alias: t_image_alias
 	DM_NVN_ENC_THREAD=0 MTL_DEBUG_LAYER=1 ./t_image_alias
 	DM_NVN_ENC_THREAD=1 MTL_DEBUG_LAYER=1 ./t_image_alias
+t_pso_unwrap: t_pso_unwrap.m $(MTL_T_DEP)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_pso_unwrap.m $(MTL_T_SRC) $(FW)
+.PHONY: check_t_pso_unwrap
+check_t_pso_unwrap: t_pso_unwrap
+	./t_pso_unwrap
+t_rt_recycle: t_rt_recycle.m $(MTL_T_DEP)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_rt_recycle.m $(MTL_T_SRC) $(FW)
+.PHONY: check_t_rt_recycle
+check_t_rt_recycle: t_rt_recycle
+	DM_NVN_ENC_THREAD=0 MTL_DEBUG_LAYER=1 ./t_rt_recycle
+	DM_NVN_ENC_THREAD=1 MTL_DEBUG_LAYER=1 ./t_rt_recycle
+	DM_NVN_RT_RECYCLE=0 MTL_DEBUG_LAYER=1 ./t_rt_recycle
 # A game's upscaler drawn by MetalFX (any profile; the profile's upscaler shaders, from its shader map, when it has some); with and without the switch, and on the encoding thread
 t_upscaler_mfx: t_upscaler_mfx.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_upscaler_mfx.m $(MTL_T_SRC) $(FW)
@@ -502,3 +526,12 @@ t_logic: t_logic.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_logic.m $(MTL_T_SRC) $(FW)
 check_t_logic: t_logic
 	@set -e; work=$$(mktemp -d); trap 'rm -rf "$$work"' EXIT; python3 test_dmsh_logic.py --fixture "$$work"; MTL_DEBUG_LAYER=1 ./t_logic "$$work"
+
+t_tex_recycle: t_tex_recycle.m $(MTL_T_DEP)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_tex_recycle.m $(MTL_T_SRC) $(FW)
+.PHONY: check_t_tex_recycle
+check_t_tex_recycle: t_tex_recycle
+	DM_NVN_TEX_RECYCLE=1 DM_NVN_ENC_THREAD=0 MTL_DEBUG_LAYER=1 ./t_tex_recycle
+	DM_NVN_TEX_RECYCLE=1 DM_NVN_ENC_THREAD=1 MTL_DEBUG_LAYER=1 ./t_tex_recycle
+	MTL_DEBUG_LAYER=1 ./t_tex_recycle off
+

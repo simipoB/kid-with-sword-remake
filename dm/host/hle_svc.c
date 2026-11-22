@@ -408,6 +408,10 @@ void dm_guest_pool_anon(void *mem, size_t size) {
     if (!g_gf_n || !mem || !size) return;
     static int on = -1; if (on < 0) { const char *e = getenv("DM_POOL_ANON"); on = !e || !*e || atoi(e); if (!on) LOG("[mem] memory pools stay in the guest files (DM_POOL_ANON=0)"); }
     if (!on) return;
+    // DM_POOL_ANON_MAX_MB=<MB> (the Potato preset): a larger pool stays in the files. With DM_NVN_GMEM_NOBIG only the chunks the GPU reaches are wrapped and wired, and the rest
+    // stays out of the footprint: Ocarina of Time's 2,432 MB pool was most of the 2.5 GB of anonymous memory in a Potato footprint of 6.3 GB (Mac, vmmap, the guest in files)
+    static long cap = -2; if (cap == -2) { const char *e = getenv("DM_POOL_ANON_MAX_MB"); cap = e && *e ? atol(e) : 0; if (cap > 0) LOG("[mem] memory pools of more than %ld MB stay in the guest files (DM_POOL_ANON_MAX_MB)", cap); }
+    if (cap > 0 && size > (size_t)cap << 20) { LOG("[mem] memory pool %p+%zu MB stays in the guest files (over DM_POOL_ANON_MAX_MB)", mem, size >> 20); return; }
     size_t pg = (size_t)getpagesize(); uintptr_t lo = (uintptr_t)mem & ~(pg - 1), hi = ((uintptr_t)mem + size + pg - 1) & ~(pg - 1);
     if (lo < (uintptr_t)g_as || hi > (uintptr_t)g_as + g_reserve) return;   // not guest memory
     pthread_mutex_lock(&g_anon_mu);

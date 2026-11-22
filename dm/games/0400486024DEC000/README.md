@@ -1,5 +1,7 @@
 # The Legend of Zelda: Ocarina of Time
 
+Playing an ocarina note aborted with `0xe15` even with rumble disabled. The missing SDK 22 `IsOunceVibrationDeviceMounted` hook is now answered as in upstream `8feddfe`; playing notes after rebuilding was confirmed on the Mac. See [Whether a vibration device is mounted](../../../docs/reference/services.md#whether-a-vibration-device-is-mounted) for the cause and fix.
+
 The Switch 2 base dump reaches its title screen on the Mac. VideoToolbox decodes the 1920×1080 AV1 track. The movie library runs its NDVE compute shaders to produce the background behind the logo and menu. Gameplay validation is open.
 
 ## Profile
@@ -91,7 +93,7 @@ Measured on an M6 Mac with 16 GB, headless, on one walk with camera turns (`walk
 - Current: on the walk, run from an external drive with a 3.5 GB pipeline archive: resident 10.9-11.4 GB, wired about 9.4 GB, on a 16 GB Mac. `vmmap` and `footprint`: 6.4 GB of guest memory and 3.8 GB of Metal textures and targets, 1 GB of IOAccelerator memory. [Reading the archive into memory](../../../docs/reference/memory.md#a-pipeline-archive-on-an-external-drive-is-read-into-memory) used to add 3.5 GB (footprint 15.0, peak 16.7). `mem_map_limit on`: a map past the application pool fails as on Horizon, and the SDK's allocator then gives back the pages it keeps. Other apps' memory adds to the swap: other games running beside it can push the Mac over.
 - This game took the Mac down before the fixes (kernel panic in `IOGPUGroupMemory` at 14.7 GB wired): [raw pool table](../../../docs/reference/memory.md#memory-pools-nothing-gave-an-address-to-stay-out-of-the-raw-pool-table), [textures made only when read](../../../docs/reference/memory.md#shaders-report-which-textures-they-read-through-a-pool), [out-of-memory exit](../../../docs/reference/memory.md#repeated-gpu-out-of-memory-failures-end-the-game).
 - Why so much: the game's own memory is about the console's 9 GB application pool, and on the Mac its textures also exist as Metal textures, as Metal cannot sample the guest's block-linear storage.
-- Open: render targets that move in the game's pool and change size with its dynamic resolution (1580 → 1579 → 1578 …) get a new Metal texture each time, about 2 GB added to the residency set per 300 frames. It costs about 0.5 ms a frame once settled, so recycling them is a smaller win than the walk, but [a report of a GPU driver panic](https://github.com/seedds/nxnative/pull/1299) lines up with this churn.
+- Resolved in part ([#1831](https://github.com/seedds/nxnative/issues/1831)): render targets that move in the game's 305 MB pool and change size with its dynamic resolution still get a new Metal texture each time. Their memory is now recycled ([Render targets that move with the dynamic resolution](../../../docs/reference/rendering.md#render-targets-that-move-with-the-dynamic-resolution-get-new-metal-memory-each-time)). Since 04419bc2 the resolution moves, and on a 16 GB MacBook Air M4 the game stuttered (p95 99 ms) with GPU allocation near 15 GB. On an M6, while the resolution moved in the village, the target site added 455-521 MB to the residency set per 300 frames without recycling and 27-37 MB with it once heaps were waiting, and frame p90 went from 33-50 ms to 17-18 ms. Open: the live targets' steady total, about 2.1 GB in the village. They cannot share the pool's memory as on the console: the game keeps live targets in the part of the full-size scene target its resolution leaves unused, which only NVN's layout allows (PR #1453). [A report of a GPU driver panic](https://github.com/seedds/nxnative/pull/1299) lines up with this churn. The reporter's Mac has not been tested.
 
 ## Saves
 
@@ -119,6 +121,7 @@ From an empty save: at about 45 s `A` (title), `A` (New Game), then the movie. F
 
 ## Found on this game
 
+- [Frame generation between held presents](../../../docs/reference/frame-rate.md#frame-generation-between-held-presents): at the 30 fps cap MetalFX makes a frame between each two presents and the display link shows 60; on the Mac (M5) 7,200 generated and shown, the picture not judged (the Mac libraries of the chain in use were incomplete).
 - [HMMA chains keep their matrices in the SIMD-group](../../../docs/reference/shaders.md#hmma-chains-keep-their-matrices-in-the-simd-group): the NDVE movie networks behind the title and the opening, 14.8 → 11.4 ms of compute a frame on this M6.
 - [Compute pipelines built on the submit thread at their first dispatch](../../../docs/reference/frame-rate.md#compute-pipelines-built-on-the-submit-thread-at-their-first-dispatch): frames of 2-4 s on entering a new area; 155 s of the title on a cold Metal cache.
 - [Raw global memory lookups that start from their last entry](../../../docs/reference/shaders.md#raw-global-memory-lookups-that-start-from-their-last-entry): the foliage, vertex and compute shaders read structures word by word through loaded addresses; about 2 ms less GPU a frame at the spawn point.
@@ -147,3 +150,4 @@ From an empty save: at about 45 s `A` (title), `A` (New Game), then the movie. F
 - [Image atomics on a 32-bit colour texture](../../../docs/reference/shaders.md#image-atomics-on-a-32-bit-colour-texture)
 - [A host's own store in a fragment shader moves its depth test](../../../docs/reference/frame-rate.md#a-hosts-own-store-in-a-fragment-shader-moves-its-depth-test)
 - [Dead-code removal dropped a coordinate of a multi-output instruction](../../../docs/reference/shaders.md#dead-code-removal-dropped-a-coordinate-of-a-multi-output-instruction)
+- [Render targets that move with the dynamic resolution get new Metal memory each time](../../../docs/reference/rendering.md#render-targets-that-move-with-the-dynamic-resolution-get-new-metal-memory-each-time): the targets in the 305 MB pool, recycled since #1831.
